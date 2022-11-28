@@ -1,0 +1,6 @@
+name: gcp-locust-mqtt-bench
+description: A benchmarking tool for testing the performance of MQTT brokers under load on GCP.
+runtime:
+    name: python
+    options:
+        virtualenv: venv

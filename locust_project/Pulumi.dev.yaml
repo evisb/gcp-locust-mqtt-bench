@@ -1,0 +1,7 @@
+encryptionsalt: v1:kO4MpOMSrwo=:v1:Nm04r+nvgzYsJE2v:/5R66fUcFOxE2ZW8VRlT1av2d93tUA==
+config:
+  gcp-locust-mqtt-bench:gke_machine_type: e2-medium
+  gcp-locust-mqtt-bench:gke_node_count: "2"
+  gcp:project: loucust-cluster-gke-231120253
+  gcp:region: us-central1
+  gcp:zone: us-central1-a
