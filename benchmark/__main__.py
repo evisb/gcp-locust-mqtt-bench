@@ -141,16 +141,15 @@ pulumi.export('firewall_rule', gcp.compute.Firewall('default-allow-locust', netw
 image = docker.Image(
     name="locustMaster",
     build=docker.DockerBuild(context="k8s", dockerfile='k8s/DockerfileMaster'),
-    image_name= bench_project.project_id.apply(
+    image_name=bench_project.project_id.apply(
         lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
-    ) 
+)
 
 # Create deployment and service for the Locust master.
 deployment = kube.apps.v1.Deployment(
     "locust-master",
     spec=kube.apps.v1.DeploymentSpecArgs(
         selector=kube.meta.v1.LabelSelectorArgs(match_labels={
-            "app": "locust",
             "component": "master",
         }),
         replicas=1,
@@ -162,15 +161,37 @@ deployment = kube.apps.v1.Deployment(
             spec=kube.core.v1.PodSpecArgs(
                 containers=[
                     kube.core.v1.ContainerArgs(
-                        name="locust-master",
+                        name="locust",
                         image=image.image_name,
-                        ports=[kube.core.v1.ContainerPortArgs(
-                            container_port=8089,
-                        )],
                         env=[kube.core.v1.EnvVarArgs(
                             name="LOCUST_MODE",
                             value="master",
                         )],
+                        ports=[kube.core.v1.ContainerPortArgs(
+                            name="loc-master-web",
+                            container_port=8089,
+                            protocol="TCP",),
+                            kube.core.v1.ContainerPortArgs(
+                            name="loc-master-p1",
+                            container_port=5557,
+                            protocol="TCP",),
+                            kube.core.v1.ContainerPortArgs(
+                            name="loc-master-p2",
+                            container_port=5558,
+                            protocol="TCP",),
+                        ],
+                        liveness_probe=kube.core.v1.ProbeArgs(
+                            http_get=kube.core.v1.HTTPGetActionArgs(
+                                path="/",
+                                port=8089,),
+                            period_seconds=30,
+                        ),
+                        readiness_probe=kube.core.v1.ProbeArgs(
+                            http_get=kube.core.v1.HTTPGetActionArgs(
+                                path="/",
+                                port=8089,),
+                            period_seconds=30,
+                        )
                     ),
                 ],
             ),
@@ -184,7 +205,8 @@ deployment = kube.apps.v1.Deployment(
 service = kube.core.v1.Service(
     "locust-master",
     metadata=kube.meta.v1.ObjectMetaArgs(
-        labels=deployment.spec.apply(lambda spec: spec.template.metadata.labels),
+        labels=deployment.spec.apply(
+            lambda spec: spec.template.metadata.labels),
     ),
     spec=kube.core.v1.ServiceSpecArgs(
         type="LoadBalancer",
@@ -192,7 +214,8 @@ service = kube.core.v1.Service(
             port=8089,
             target_port=8089,
         )],
-        selector=deployment.spec.apply(lambda spec: spec.template.metadata.labels),
+        selector=deployment.spec.apply(
+            lambda spec: spec.template.metadata.labels),
     ),
     opts=pulumi.ResourceOptions(
         depends_on=[deployment]
@@ -200,8 +223,8 @@ service = kube.core.v1.Service(
 )
 
 # Export the service IP.
-pulumi.export("service_ip", service.status.apply(lambda status: status.load_balancer.ingress[0].ip))
-
+pulumi.export("service_ip", service.status.apply(
+    lambda status: status.load_balancer.ingress[0].ip))
 
 
 # Create a Docker image for the Locust worker and push it to the default GCR registry.
