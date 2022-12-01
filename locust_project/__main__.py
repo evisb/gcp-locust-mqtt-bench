@@ -5,14 +5,18 @@ import pulumi_gcp as gcp
 config = pulumi.Config()
 NODE_COUNT = config.get_int('gke_node_count')
 MACHINE_TYPE = config.get('gke_machine_type')
+BILLING_ACCOUNT = config.get('billing_account')
+PROJECT_NAME = config.get('project_name')
+PROJECT_ID = config.get('project_id')
+
 
 
 # Create a project for the Locust cluster
 bench_project = gcp.organizations.Project(
-    'project',
-    name='pulumi-gke',
-    project_id='loucust-cluster-gke-231120253',
-    billing_account='01659C-EF5CED-1C5E4B',
+    'locust-project',
+    name=PROJECT_NAME,
+    project_id=PROJECT_ID,
+    billing_account=BILLING_ACCOUNT,
 )
 
 # Export the project ID, name, and number
@@ -38,6 +42,13 @@ org_api = gcp.projects.Service(
     project=bench_project.project_id,
     service='orgpolicy.googleapis.com',
 ).disable_dependent_services
+
+registry_api = gcp.projects.Service(
+    'registry-api',
+    project=bench_project.project_id,
+    service='containerregistry.googleapis.com',
+).disable_dependent_services
+
 # Create a default VPC network
 vpc = gcp.compute.Network('default', mtu=1460, auto_create_subnetworks=True,
                           routing_mode='GLOBAL', project=bench_project.project_id,
@@ -121,3 +132,13 @@ gke_cluster = gcp.container.Cluster(
 # Export the cluster name and endpoint.
 pulumi.export('cluster_name', gke_cluster.name)
 pulumi.export('cluster_endpoint', gke_cluster.endpoint)
+
+'''
+pulumi.export('firewall_rule', gcp.compute.Firewall('default-allow-locust', network=vpc.name, allows=[
+        gcp.compute.FirewallAllowArgs(
+            protocol="http",
+        )]))
+
+# update firewall rule to allow ingress traffic from the locust master
+
+'''

@@ -1,2 +1,4 @@
 pulumi>=3.0.0,<4.0.0
 pulumi-gcp>=6.0.0,<7.0.0
+pulumi-kubernetes>=3.0.0,<4.0.0
+pulumi-docker>=3.6.1,<5.0.0
