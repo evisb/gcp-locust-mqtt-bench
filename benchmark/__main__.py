@@ -1,10 +1,18 @@
-import pulumi
-import pulumi_gcp as gcp
+from pulumi import Config, export, Output, ResourceOptions
+
+from pulumi_gcp import projects, organizations, compute, serviceaccount
+from pulumi_gcp.config import project, zone
+from pulumi_gcp.container import Cluster, NodePoolNodeConfigArgs
+
 import pulumi_docker as docker
-import pulumi_kubernetes as kube
+
+from pulumi_kubernetes import Provider
+from pulumi_kubernetes.apps.v1 import Deployment, DeploymentSpecArgs
+from pulumi_kubernetes.core.v1 import ContainerArgs, PodSpecArgs, PodTemplateSpecArgs, EnvVarArgs, ContainerPortArgs, ProbeArgs, HTTPGetActionArgs, Service, ServicePortArgs, ServiceSpecArgs
+from pulumi_kubernetes.meta.v1 import LabelSelectorArgs, ObjectMetaArgs
 
 # Get the configuration settings from the Pulumi stack
-config = pulumi.Config()
+config = Config()
 NODE_COUNT = config.get_int('gke_node_count')
 MACHINE_TYPE = config.get('gke_machine_type')
 BILLING_ACCOUNT = config.get('billing_account')
@@ -12,7 +20,7 @@ PROJECT_NAME = config.get('project_name')
 PROJECT_ID = config.get('project_id')
 
 # Create a project for the Locust cluster
-bench_project = gcp.organizations.Project(
+bench_project = organizations.Project(
     'locust-project',
     name=PROJECT_NAME,
     project_id=PROJECT_ID,
@@ -20,176 +28,214 @@ bench_project = gcp.organizations.Project(
 )
 
 # Export the project ID, name, and number
-pulumi.export('project_id', bench_project.project_id)
-pulumi.export('project_name', bench_project.name)
-pulumi.export('project_number', bench_project.number)
+export('project_id', bench_project.project_id)
+export('project_name', bench_project.name)
+export('project_number', bench_project.number)
 
 # Enable the necessary APIs
-compute_api = gcp.projects.Service(
-    'compute-api',
-    project=bench_project.project_id,
-    service='compute.googleapis.com',
-).disable_dependent_services
+compute_api = projects.Service('compute-api',
+                               project=bench_project.project_id, 
+                               service='compute.googleapis.com',
+                               disable_dependent_services=True)
 
-container_api = gcp.projects.Service(
-    'container-api',
-    project=bench_project.project_id,
-    service='container.googleapis.com',
-).disable_dependent_services
+container_api = projects.Service('container-api',
+                                 project=bench_project.project_id,
+                                 service='container.googleapis.com',
+                                 disable_dependent_services=True)
 
-org_api = gcp.projects.Service(
-    'org-api',
-    project=bench_project.project_id,
-    service='orgpolicy.googleapis.com',
-).disable_dependent_services
+iam_api = projects.Service('iam-api',
+                           project=bench_project.project_id,
+                           service='iam.googleapis.com',
+                           disable_dependent_services=True)
 
-registry_api = gcp.projects.Service(
-    'registry-api',
-    project=bench_project.project_id,
-    service='containerregistry.googleapis.com',
-).disable_dependent_services
+
+org_api = projects.Service('org-api',
+                           project=bench_project.project_id,
+                           service='orgpolicy.googleapis.com',
+                           disable_dependent_services=True)
+
+registry_api = projects.Service('registry-api',
+                                project=bench_project.project_id,
+                                service='containerregistry.googleapis.com',
+                                disable_dependent_services=True)
 
 # Create a default VPC network
-vpc = gcp.compute.Network('default', mtu=1460, auto_create_subnetworks=True,
-                          routing_mode='GLOBAL', project=bench_project.project_id,
-                          opts=pulumi.ResourceOptions(depends_on=[compute_api])
-                          )
+vpc = compute.Network('defaultvpc', name="default", mtu=1460, auto_create_subnetworks=True,
+                      routing_mode='GLOBAL', project=bench_project.project_id,
+                      opts=ResourceOptions(depends_on=[compute_api])
+                      )
 
 # Argolis specific
-os_login = gcp.projects.OrganizationPolicy(
-    "compute.requireOsLogin",
-    boolean_policy=gcp.projects.OrganizationPolicyBooleanPolicyArgs(
-        enforced=False,
-    ),
-    constraint="compute.requireOsLogin",
-    project=bench_project.project_id,
-    opts=pulumi.ResourceOptions(depends_on=[org_api])
-)
+os_login = projects.OrganizationPolicy("compute.requireOsLogin",
+                                       boolean_policy=projects.OrganizationPolicyBooleanPolicyArgs(
+                                           enforced=False,
+                                       ),
+                                       constraint="compute.requireOsLogin",
+                                       project=bench_project.project_id,
+                                       opts=ResourceOptions(
+                                           depends_on=[org_api])
+                                       )
 
-shielded_vm = gcp.projects.OrganizationPolicy(
-    "compute.requireShieldedVm",
-    boolean_policy=gcp.projects.OrganizationPolicyBooleanPolicyArgs(
-        enforced=False,
-    ),
-    constraint="compute.requireShieldedVm",
-    project=bench_project.project_id,
-    opts=pulumi.ResourceOptions(depends_on=[org_api])
-)
+shielded_vm = projects.OrganizationPolicy("compute.requireShieldedVm",
+                                          boolean_policy=projects.OrganizationPolicyBooleanPolicyArgs(
+                                              enforced=False,
+                                          ),
+                                          constraint="compute.requireShieldedVm",
+                                          project=bench_project.project_id,
+                                          opts=ResourceOptions(
+                                              depends_on=[org_api])
+                                          )
 
-vm_can_ip_forward = gcp.projects.OrganizationPolicy(
-    "compute.vmCanIpForward",
-    list_policy=gcp.projects.OrganizationPolicyListPolicyArgs(
-        allow=gcp.projects.OrganizationPolicyListPolicyAllowArgs(
-            all=True)
-    ),
-    constraint="compute.vmCanIpForward",
-    project=bench_project.project_id,
-    opts=pulumi.ResourceOptions(depends_on=[org_api])
-)
+vm_can_ip_forward = projects.OrganizationPolicy("compute.vmCanIpForward",
+                                                list_policy=projects.OrganizationPolicyListPolicyArgs(
+                                                    allow=projects.OrganizationPolicyListPolicyAllowArgs(
+                                                        all=True)
+                                                ),
+                                                constraint="compute.vmCanIpForward",
+                                                project=bench_project.project_id,
+                                                opts=ResourceOptions(
+                                                    depends_on=[org_api])
+                                                )
 
-vm_external_ip_access = gcp.projects.OrganizationPolicy(
-    "compute.vmExternalIpAccess",
-    list_policy=gcp.projects.OrganizationPolicyListPolicyArgs(
-        allow=gcp.projects.OrganizationPolicyListPolicyAllowArgs(
-            all=True)
-    ),
-    constraint="compute.vmExternalIpAccess",
-    project=bench_project.project_id,
-    opts=pulumi.ResourceOptions(depends_on=[org_api])
-)
+vm_external_ip_access = projects.OrganizationPolicy("compute.vmExternalIpAccess",
+                                                    list_policy=projects.OrganizationPolicyListPolicyArgs(
+                                                        allow=projects.OrganizationPolicyListPolicyAllowArgs(
+                                                            all=True)
+                                                    ),
+                                                    constraint="compute.vmExternalIpAccess",
+                                                    project=bench_project.project_id,
+                                                    opts=ResourceOptions(
+                                                        depends_on=[org_api])
+                                                    )
 
-restrict_vpc_peering = gcp.projects.OrganizationPolicy(
-    "compute.restrictVpcPeering",
-    list_policy=gcp.projects.OrganizationPolicyListPolicyArgs(
-        allow=gcp.projects.OrganizationPolicyListPolicyAllowArgs(
-            all=True)
-    ),
-    constraint="compute.restrictVpcPeering",
-    project=bench_project.project_id,
-    opts=pulumi.ResourceOptions(depends_on=[org_api])
-)
+restrict_vpc_peering = projects.OrganizationPolicy("compute.restrictVpcPeering",
+                                                   list_policy=projects.OrganizationPolicyListPolicyArgs(
+                                                       allow=projects.OrganizationPolicyListPolicyAllowArgs(
+                                                           all=True)
+                                                   ),
+                                                   constraint="compute.restrictVpcPeering",
+                                                   project=bench_project.project_id,
+                                                   opts=ResourceOptions(
+                                                       depends_on=[org_api])
+                                                   )
+
+# Create a service account with the container.nodeServiceAccount role to create the GKE cluster
+locust_service_account = serviceaccount.Account('ltk-sa',
+                                                account_id='ltk-sa',
+                                                display_name='GKE Service Account',
+                                                opts=ResourceOptions(
+                                                    depends_on=[iam_api])
+                                                )
+
+ltk_sa_role = projects.IAMMember('ltk-sa-role',
+                                 member=locust_service_account.email.apply(
+                                     lambda email: f'serviceAccount:{email}'),
+                                 role='roles/container.nodeServiceAccount',
+                                 project=bench_project.project_id
+                                 )
 
 
 # Create a GKE cluster.
-gke_cluster = gcp.container.Cluster(
-    "locust-cluster",
-    initial_node_count=NODE_COUNT,
-    network=vpc.name,
-    project=bench_project.project_id,
-    node_config=gcp.container.NodePoolNodeConfigArgs(
-        machine_type=MACHINE_TYPE,
-    ),
-    opts=pulumi.ResourceOptions(
-        depends_on=[container_api, os_login, shielded_vm, vm_can_ip_forward,
-                    vm_external_ip_access, restrict_vpc_peering]
-    )
-)
+gke_cluster = Cluster("locust-cluster",
+                      initial_node_count=NODE_COUNT,
+                      network=vpc.name,
+                      project=bench_project.project_id,
+                      node_config=NodePoolNodeConfigArgs(
+                          machine_type=MACHINE_TYPE,
+                          service_account=locust_service_account.email,
+                      ),
+                      opts=ResourceOptions(
+                          depends_on=[container_api, os_login, shielded_vm, vm_can_ip_forward,
+                                      vm_external_ip_access, restrict_vpc_peering]
+                      )
+                      )
+
+# Create a GKE-style Kubeconfig to use gcloud for cluster authentication (rather than using the client cert/key directly).
+gke_info = Output.all(
+    gke_cluster.name, gke_cluster.endpoint, gke_cluster.master_auth)
+gke_config = gke_info.apply(
+    lambda info: """apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: {0}
+    server: https://{1}
+  name: {2}
+contexts:
+- context:
+    cluster: {2}
+    user: {2}
+  name: {2}
+current-context: {2}
+kind: Config
+preferences: {{}}
+users:
+- name: {2}
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1beta1
+      command: gke-gcloud-auth-plugin
+      installHint: Install gke-gcloud-auth-plugin for use with kubectl by following
+        https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke
+      provideClusterInfo: true
+""".format(info[2]['cluster_ca_certificate'], info[1], '{0}_{1}_{2}'.format(project, zone, info[0])))
+
+# Make a Kubernetes provider instance that uses our cluster from above.
+gke_provider = Provider('gke_k8s', kubeconfig=gke_config)
 
 # Export the cluster name and endpoint.
-pulumi.export('cluster_name', gke_cluster.name)
-pulumi.export('cluster_endpoint', gke_cluster.endpoint)
+export('cluster_name', gke_cluster.name)
+export('cluster_endpoint', gke_cluster.endpoint)
 
-'''
-# Update firewall rule to allow ingress traffic from the locust master
-pulumi.export('firewall_rule', gcp.compute.Firewall('default-allow-locust', network=vpc.name, allows=[
-        gcp.compute.FirewallAllowArgs(
-            protocol="http",
-        )]))
-'''
 
 # Create a Docker image for the Locust master and push it to the default GCR registry.
-image = docker.Image(
-    name="locustMaster",
-    build=docker.DockerBuild(context="k8s", dockerfile='k8s/DockerfileMaster'),
-    image_name=bench_project.project_id.apply(
-        lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
-)
+image = docker.Image(name="locustMaster",
+                     build=docker.DockerBuild(
+                         context="k8s", dockerfile='k8s/DockerfileMaster'),
+                     image_name=bench_project.project_id.apply(
+                         lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
+                     opts=ResourceOptions(depends_on=[registry_api])
+                     )
 
 # Create deployment and service for the Locust master.
-deployment = kube.apps.v1.Deployment(
+deployment = Deployment(
     "locust-master",
-    spec=kube.apps.v1.DeploymentSpecArgs(
-        selector=kube.meta.v1.LabelSelectorArgs(match_labels={
+    spec=DeploymentSpecArgs(
+        selector=LabelSelectorArgs(match_labels={
             "component": "master",
         }),
         replicas=1,
-        template=kube.core.v1.PodTemplateSpecArgs(
-            metadata=kube.meta.v1.ObjectMetaArgs(labels={
+        template=PodTemplateSpecArgs(
+            metadata=ObjectMetaArgs(labels={
                 "app": "locust",
                 "component": "master",
             }),
-            spec=kube.core.v1.PodSpecArgs(
+            spec=PodSpecArgs(
                 containers=[
-                    kube.core.v1.ContainerArgs(
+                    ContainerArgs(
                         name="locust",
                         image=image.image_name,
-                        env=[kube.core.v1.EnvVarArgs(
+                        env=[EnvVarArgs(
                             name="LOCUST_MODE",
                             value="master",
                         )],
-                        ports=[kube.core.v1.ContainerPortArgs(
-                            name="loc-master-web",
-                            container_port=8089,
-                            protocol="TCP",),
-                            kube.core.v1.ContainerPortArgs(
-                            name="loc-master-p1",
-                            container_port=5557,
-                            protocol="TCP",),
-                            kube.core.v1.ContainerPortArgs(
-                            name="loc-master-p2",
-                            container_port=5558,
-                            protocol="TCP",),
-                        ],
-                        liveness_probe=kube.core.v1.ProbeArgs(
-                            http_get=kube.core.v1.HTTPGetActionArgs(
-                                path="/",
-                                port=8089,),
+                        ports=[ContainerPortArgs(name="loc-master-web",
+                                                 container_port=8089,
+                                                 protocol="TCP",),
+                               ContainerPortArgs(name="loc-master-p1",
+                                                 container_port=5557,
+                                                 protocol="TCP",),
+                               ContainerPortArgs(name="loc-master-p2",
+                                                 container_port=5558,
+                                                 protocol="TCP",),
+                               ],
+                        liveness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                            path="/",
+                            port=8089,),
                             period_seconds=30,
                         ),
-                        readiness_probe=kube.core.v1.ProbeArgs(
-                            http_get=kube.core.v1.HTTPGetActionArgs(
-                                path="/",
-                                port=8089,),
+                        readiness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                            path="/",
+                            port=8089,),
                             period_seconds=30,
                         )
                     ),
@@ -197,33 +243,33 @@ deployment = kube.apps.v1.Deployment(
             ),
         ),
     ),
-    opts=pulumi.ResourceOptions(
-        depends_on=[registry_api, image]
+    opts=ResourceOptions(
+        provider=gke_provider,
+        depends_on=[registry_api, image, gke_cluster]
     )
 )
 
-service = kube.core.v1.Service(
-    "locust-master",
-    metadata=kube.meta.v1.ObjectMetaArgs(
-        labels=deployment.spec.apply(
-            lambda spec: spec.template.metadata.labels),
-    ),
-    spec=kube.core.v1.ServiceSpecArgs(
-        type="LoadBalancer",
-        ports=[kube.core.v1.ServicePortArgs(
-            port=8089,
-            target_port=8089,
-        )],
-        selector=deployment.spec.apply(
-            lambda spec: spec.template.metadata.labels),
-    ),
-    opts=pulumi.ResourceOptions(
-        depends_on=[deployment]
-    )
-)
+service = Service("locust-master",
+                  metadata=ObjectMetaArgs(
+                      labels=deployment.spec.apply(
+                          lambda spec: spec.template.metadata.labels),
+                  ),
+                  spec=ServiceSpecArgs(type="LoadBalancer",
+                                       ports=[ServicePortArgs(
+                                           port=8089,
+                                           target_port=8089,
+                                       )],
+                                       selector=deployment.spec.apply(
+                                           lambda spec: spec.template.metadata.labels),
+                                       ),
+                  opts=ResourceOptions(
+                      provider=gke_provider,
+                      depends_on=[deployment]
+                  )
+                  )
 
 # Export the service IP.
-pulumi.export("service_ip", service.status.apply(
+export("service_ip", service.status.apply(
     lambda status: status.load_balancer.ingress[0].ip))
 
 
