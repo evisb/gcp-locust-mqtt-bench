@@ -11,7 +11,6 @@ BILLING_ACCOUNT = config.get('billing_account')
 PROJECT_NAME = config.get('project_name')
 PROJECT_ID = config.get('project_id')
 
-
 # Create a project for the Locust cluster
 bench_project = gcp.organizations.Project(
     'locust-project',
@@ -56,11 +55,7 @@ vpc = gcp.compute.Network('default', mtu=1460, auto_create_subnetworks=True,
                           opts=pulumi.ResourceOptions(depends_on=[compute_api])
                           )
 
-# Create a firewall rule to allow ingress traffic
-
-
 # Argolis specific
-
 os_login = gcp.projects.OrganizationPolicy(
     "compute.requireOsLogin",
     boolean_policy=gcp.projects.OrganizationPolicyBooleanPolicyArgs(
@@ -135,18 +130,23 @@ pulumi.export('cluster_name', gke_cluster.name)
 pulumi.export('cluster_endpoint', gke_cluster.endpoint)
 
 '''
+# Update firewall rule to allow ingress traffic from the locust master
 pulumi.export('firewall_rule', gcp.compute.Firewall('default-allow-locust', network=vpc.name, allows=[
         gcp.compute.FirewallAllowArgs(
             protocol="http",
         )]))
-
-# update firewall rule to allow ingress traffic from the locust master
-
 '''
 
-# Create a Docker image and push it to the default GCR registry.
+# Create a Docker image for the Locust master and push it to the default GCR registry.
 image = docker.Image(
-    name="DockerfileMaster",
-    build=docker.DockerBuild(context="k8s"),
-    image_name="gcr.io/locust-cluster-gke-23112j/locust_master:latest",
-)
+    name="locustMaster",
+    build=docker.DockerBuild(context="k8s", dockerfile='k8s/DockerfileMaster'),
+    image_name= bench_project.project_id.apply(
+        lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
+    ) 
+
+
+
+
+
+# Create a Docker image for the Locust worker and push it to the default GCR registry.
