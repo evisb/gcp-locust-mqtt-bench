@@ -145,9 +145,63 @@ image = docker.Image(
         lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
     ) 
 
-#
-
 # Create deployment and service for the Locust master.
+deployment = kube.apps.v1.Deployment(
+    "locust-master",
+    spec=kube.apps.v1.DeploymentSpecArgs(
+        selector=kube.meta.v1.LabelSelectorArgs(match_labels={
+            "app": "locust",
+            "component": "master",
+        }),
+        replicas=1,
+        template=kube.core.v1.PodTemplateSpecArgs(
+            metadata=kube.meta.v1.ObjectMetaArgs(labels={
+                "app": "locust",
+                "component": "master",
+            }),
+            spec=kube.core.v1.PodSpecArgs(
+                containers=[
+                    kube.core.v1.ContainerArgs(
+                        name="locust-master",
+                        image=image.image_name,
+                        ports=[kube.core.v1.ContainerPortArgs(
+                            container_port=8089,
+                        )],
+                        env=[kube.core.v1.EnvVarArgs(
+                            name="LOCUST_MODE",
+                            value="master",
+                        )],
+                    ),
+                ],
+            ),
+        ),
+    ),
+    opts=pulumi.ResourceOptions(
+        depends_on=[registry_api, image]
+    )
+)
+
+service = kube.core.v1.Service(
+    "locust-master",
+    metadata=kube.meta.v1.ObjectMetaArgs(
+        labels=deployment.spec.apply(lambda spec: spec.template.metadata.labels),
+    ),
+    spec=kube.core.v1.ServiceSpecArgs(
+        type="LoadBalancer",
+        ports=[kube.core.v1.ServicePortArgs(
+            port=8089,
+            target_port=8089,
+        )],
+        selector=deployment.spec.apply(lambda spec: spec.template.metadata.labels),
+    ),
+    opts=pulumi.ResourceOptions(
+        depends_on=[deployment]
+    )
+)
+
+# Export the service IP.
+pulumi.export("service_ip", service.status.apply(lambda status: status.load_balancer.ingress[0].ip))
+
 
 
 # Create a Docker image for the Locust worker and push it to the default GCR registry.
