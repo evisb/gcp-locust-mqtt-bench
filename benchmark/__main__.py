@@ -1,5 +1,7 @@
 import pulumi
 import pulumi_gcp as gcp
+import pulumi_docker as docker
+import pulumi_kubernetes as kube
 
 # Get the configuration settings from the Pulumi stack
 config = pulumi.Config()
@@ -8,7 +10,6 @@ MACHINE_TYPE = config.get('gke_machine_type')
 BILLING_ACCOUNT = config.get('billing_account')
 PROJECT_NAME = config.get('project_name')
 PROJECT_ID = config.get('project_id')
-
 
 
 # Create a project for the Locust cluster
@@ -142,3 +143,10 @@ pulumi.export('firewall_rule', gcp.compute.Firewall('default-allow-locust', netw
 # update firewall rule to allow ingress traffic from the locust master
 
 '''
+
+# Create a Docker image and push it to the default GCR registry.
+image = docker.Image(
+    name="DockerfileMaster",
+    build=docker.DockerBuild(context="k8s"),
+    image_name="gcr.io/locust-cluster-gke-23112j/locust_master:latest",
+)
