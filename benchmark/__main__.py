@@ -145,8 +145,9 @@ image = docker.Image(
         lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
     ) 
 
+#
 
-
+# Create deployment and service for the Locust master.
 
 
 # Create a Docker image for the Locust worker and push it to the default GCR registry.
