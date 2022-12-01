@@ -2,9 +2,9 @@ encryptionsalt: v1:kO4MpOMSrwo=:v1:Nm04r+nvgzYsJE2v:/5R66fUcFOxE2ZW8VRlT1av2d93t
 config:
   gcp-locust-mqtt-bench:gke_machine_type: e2-medium
   gcp-locust-mqtt-bench:gke_node_count: "2"
-  gcp-locust-mqtt-bench:project_id: locust-cluster-gke-23112y
+  gcp-locust-mqtt-bench:project_id: locust-cluster-gke-23113e
   gcp-locust-mqtt-bench:project_name: locust-cluster-gke
   gcp-locust-mqtt-bench:billing_account: "01659C-EF5CED-1C5E4B"
-  gcp:project: locust-cluster-gke-23112y
+  gcp:project: locust-cluster-gke-23113e
   gcp:region: us-central1
   gcp:zone: us-central1-a

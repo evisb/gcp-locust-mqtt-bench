@@ -4,11 +4,12 @@ from pulumi_gcp import projects, organizations, compute, serviceaccount
 from pulumi_gcp.config import project, zone
 from pulumi_gcp.container import Cluster, NodePoolNodeConfigArgs
 
-import pulumi_docker as docker
+from pulumi_docker import Image, DockerBuild
 
 from pulumi_kubernetes import Provider
 from pulumi_kubernetes.apps.v1 import Deployment, DeploymentSpecArgs
-from pulumi_kubernetes.core.v1 import ContainerArgs, PodSpecArgs, PodTemplateSpecArgs, EnvVarArgs, ContainerPortArgs, ProbeArgs, HTTPGetActionArgs, Service, ServicePortArgs, ServiceSpecArgs
+from pulumi_kubernetes.core.v1 import ContainerArgs, PodSpecArgs, PodTemplateSpecArgs, EnvVarArgs, ContainerPortArgs, \
+                                        ProbeArgs, HTTPGetActionArgs, Service, ServicePortArgs, ServiceSpecArgs
 from pulumi_kubernetes.meta.v1 import LabelSelectorArgs, ObjectMetaArgs
 
 # Get the configuration settings from the Pulumi stack
@@ -34,7 +35,7 @@ export('project_number', bench_project.number)
 
 # Enable the necessary APIs
 compute_api = projects.Service('compute-api',
-                               project=bench_project.project_id, 
+                               project=bench_project.project_id,
                                service='compute.googleapis.com',
                                disable_dependent_services=True)
 
@@ -124,16 +125,13 @@ locust_service_account = serviceaccount.Account('ltk-sa',
                                                 account_id='ltk-sa',
                                                 display_name='GKE Service Account',
                                                 opts=ResourceOptions(
-                                                    depends_on=[iam_api])
-                                                )
+                                                    depends_on=[iam_api]))
 
-ltk_sa_role = projects.IAMMember('ltk-sa-role',
-                                 member=locust_service_account.email.apply(
-                                     lambda email: f'serviceAccount:{email}'),
-                                 role='roles/container.nodeServiceAccount',
-                                 project=bench_project.project_id
-                                 )
-
+projects.IAMMember('node-sa-role',
+                   member=locust_service_account.email.apply(
+                       lambda email: f'serviceAccount:{email}'),
+                   role='roles/container.nodeServiceAccount',
+                   project=bench_project.project_id)
 
 # Create a GKE cluster.
 gke_cluster = Cluster("locust-cluster",
@@ -143,6 +141,12 @@ gke_cluster = Cluster("locust-cluster",
                       node_config=NodePoolNodeConfigArgs(
                           machine_type=MACHINE_TYPE,
                           service_account=locust_service_account.email,
+                          oauth_scopes=[
+                              'https://www.googleapis.com/auth/compute',
+                              'https://www.googleapis.com/auth/devstorage.read_only',
+                              'https://www.googleapis.com/auth/logging.write',
+                              'https://www.googleapis.com/auth/monitoring'
+                          ],
                       ),
                       opts=ResourceOptions(
                           depends_on=[container_api, os_login, shielded_vm, vm_can_ip_forward,
@@ -188,89 +192,64 @@ export('cluster_endpoint', gke_cluster.endpoint)
 
 
 # Create a Docker image for the Locust master and push it to the default GCR registry.
-image = docker.Image(name="locustMaster",
-                     build=docker.DockerBuild(
-                         context="k8s", dockerfile='k8s/DockerfileMaster'),
-                     image_name=bench_project.project_id.apply(
-                         lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
-                     opts=ResourceOptions(depends_on=[registry_api])
-                     )
+master = Image(name="locustMaster",
+              build=DockerBuild(context="k8s", dockerfile='k8s/DockerfileMaster'),
+              image_name=bench_project.project_id.apply(lambda project_id: f"gcr.io/{project_id}/locust-master:latest"),
+              opts=ResourceOptions(depends_on=[registry_api]))
 
 # Create deployment and service for the Locust master.
 deployment = Deployment(
     "locust-master",
-    spec=DeploymentSpecArgs(
-        selector=LabelSelectorArgs(match_labels={
+    spec=DeploymentSpecArgs(selector=LabelSelectorArgs(match_labels={
+        "component": "master", }),
+        replicas=1,
+        template=PodTemplateSpecArgs(metadata=ObjectMetaArgs(labels={
+            "app": "locust",
             "component": "master",
         }),
-        replicas=1,
-        template=PodTemplateSpecArgs(
-            metadata=ObjectMetaArgs(labels={
-                "app": "locust",
-                "component": "master",
-            }),
-            spec=PodSpecArgs(
-                containers=[
-                    ContainerArgs(
-                        name="locust",
-                        image=image.image_name,
-                        env=[EnvVarArgs(
-                            name="LOCUST_MODE",
-                            value="master",
-                        )],
-                        ports=[ContainerPortArgs(name="loc-master-web",
-                                                 container_port=8089,
-                                                 protocol="TCP",),
-                               ContainerPortArgs(name="loc-master-p1",
-                                                 container_port=5557,
-                                                 protocol="TCP",),
-                               ContainerPortArgs(name="loc-master-p2",
-                                                 container_port=5558,
-                                                 protocol="TCP",),
-                               ],
-                        liveness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
-                            path="/",
-                            port=8089,),
-                            period_seconds=30,
-                        ),
-                        readiness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
-                            path="/",
-                            port=8089,),
-                            period_seconds=30,
-                        )
-                    ),
-                ],
-            ),
-        ),
-    ),
+            spec=PodSpecArgs(containers=[
+                ContainerArgs(name="locust",
+                              image=master.image_name,
+                              env=[EnvVarArgs(
+                                  name="LOCUST_MODE",
+                                  value="master",)],
+                              ports=[ContainerPortArgs(name="loc-master-web", container_port=8089, protocol="TCP",),
+                                     ContainerPortArgs(
+                                         name="loc-master-p1", container_port=5557, protocol="TCP",),
+                                     ContainerPortArgs(name="loc-master-p2", container_port=5558, protocol="TCP",), ],
+                              liveness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                                  path="/", port=8089,), period_seconds=30,),
+                              readiness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                                  path="/", port=8089,), period_seconds=30,)
+                              ), ],),),),
     opts=ResourceOptions(
         provider=gke_provider,
-        depends_on=[registry_api, image, gke_cluster]
+        depends_on=[registry_api, master, gke_cluster]
     )
 )
 
 service = Service("locust-master",
-                  metadata=ObjectMetaArgs(
-                      labels=deployment.spec.apply(
-                          lambda spec: spec.template.metadata.labels),
-                  ),
-                  spec=ServiceSpecArgs(type="LoadBalancer",
-                                       ports=[ServicePortArgs(
-                                           port=8089,
-                                           target_port=8089,
-                                       )],
-                                       selector=deployment.spec.apply(
-                                           lambda spec: spec.template.metadata.labels),
-                                       ),
-                  opts=ResourceOptions(
-                      provider=gke_provider,
-                      depends_on=[deployment]
-                  )
-                  )
+                  metadata=ObjectMetaArgs(labels=deployment.spec.apply(
+                      lambda spec: spec.template.metadata.labels),),
+                  spec=ServiceSpecArgs(type="LoadBalancer", ports=[ServicePortArgs(port=8089, target_port=8089,)],
+                                       selector=deployment.spec.apply(lambda spec: spec.template.metadata.labels),),
+                  opts=ResourceOptions(provider=gke_provider, depends_on=[deployment]))
 
-# Export the service IP.
-export("service_ip", service.status.apply(
-    lambda status: status.load_balancer.ingress[0].ip))
+# Save the service IP.
+locust_service = Output.all(service.status)
+service_ip = export('locust_service_ip', locust_service.apply(
+    lambda service: service[0]['load_balancer']['ingress'][0]['ip']))
 
+#service_ip = locust_service.apply(lambda status:status.load_balancer.ingress[0].ip)
 
+# Replace the placeholder in the DockerfileWorker.template with the service IP of the master.
 # Create a Docker image for the Locust worker and push it to the default GCR registry.
+with open("k8s/DockerfileWorker.template", "r") as f:
+    dockerfile = f.read().replace("${masterIP}", str(service_ip))
+with open("k8s/Dockerfile", "w") as f:
+    f.write(dockerfile)
+
+worker = Image(name="locustWorker",
+              build=DockerBuild(context="k8s"),
+              image_name=bench_project.project_id.apply(lambda project_id: f"gcr.io/{project_id}/locust-worker:latest"),
+              opts=ResourceOptions(depends_on=[registry_api]))
