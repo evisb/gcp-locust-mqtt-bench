@@ -236,16 +236,18 @@ service = Service("locust-master",
                   opts=ResourceOptions(provider=gke_provider, depends_on=[deployment]))
 
 # Save the service IP.
-locust_service = Output.all(service.status)
-service_ip = export('locust_service_ip', locust_service.apply(
-    lambda service: service[0]['load_balancer']['ingress'][0]['ip']))
+locust_service_ip = Output.all(service.status).apply(
+    lambda status: status[0]['load_balancer']['ingress'][0]['ip'])
 
-#service_ip = locust_service.apply(lambda status:status.load_balancer.ingress[0].ip)
+ip = locust_service_ip.apply(lambda v: f"{v}")
+
+# export the service IP 
+export('locust_service_ip', ip)
 
 # Replace the placeholder in the DockerfileWorker.template with the service IP of the master.
 # Create a Docker image for the Locust worker and push it to the default GCR registry.
 with open("k8s/DockerfileWorker.template", "r") as f:
-    dockerfile = f.read().replace("${masterIP}", str(service_ip))
+    dockerfile = f.read().replace("${masterIP}", "35.184.157.78")
 with open("k8s/Dockerfile", "w") as f:
     f.write(dockerfile)
 
