@@ -255,3 +255,35 @@ worker = Image(name="locustWorker",
               build=DockerBuild(context="k8s"),
               image_name=bench_project.project_id.apply(lambda project_id: f"gcr.io/{project_id}/locust-worker:latest"),
               opts=ResourceOptions(depends_on=[registry_api]))
+
+# Create deployment for the Locust worker.
+deployment = Deployment(
+    "locust-worker",
+    spec=DeploymentSpecArgs(selector=LabelSelectorArgs(match_labels={
+        "component": "worker", }),
+        replicas=1,
+        template=PodTemplateSpecArgs(metadata=ObjectMetaArgs(labels={
+            "app": "locust",
+            "component": "worker",
+        }),
+            spec=PodSpecArgs(containers=[
+                ContainerArgs(name="locust",
+                                image=worker.image_name,
+                                env=[EnvVarArgs(
+                                    name="LOCUST_MODE",
+                                    value="worker",)],
+                                ports=[ContainerPortArgs(name="loc-worker-web", container_port=8089, protocol="TCP",),
+                                        ContainerPortArgs(
+                                            name="loc-worker-p1", container_port=5557, protocol="TCP",),
+                                        ContainerPortArgs(name="loc-worker-p2", container_port=5558, protocol="TCP",), ],
+                                liveness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                                    path="/", port=8089,), period_seconds=30,),
+                                readiness_probe=ProbeArgs(http_get=HTTPGetActionArgs(
+                                    path="/", port=8089,), period_seconds=30,)
+                                ), ],),),),
+    opts=ResourceOptions(
+        provider=gke_provider,
+        depends_on=[registry_api, worker, gke_cluster]
+    )
+)
+
