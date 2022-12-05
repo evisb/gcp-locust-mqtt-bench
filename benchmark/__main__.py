@@ -7,7 +7,7 @@ from pulumi_gcp.container import Cluster, NodePoolNodeConfigArgs
 from pulumi_docker import Image, DockerBuild
 
 from pulumi_kubernetes import Provider
-from pulumi_kubernetes.apps.v1 import Deployment, DeploymentSpecArgs
+from pulumi_kubernetes.apps.v1 import Deployment, DeploymentSpecArgs, StatefulSet, StatefulSetSpecArgs
 from pulumi_kubernetes.core.v1 import ContainerArgs, PodSpecArgs, PodTemplateSpecArgs, EnvVarArgs, ContainerPortArgs, \
                                         ProbeArgs, HTTPGetActionArgs, Service, ServicePortArgs, ServiceSpecArgs
 from pulumi_kubernetes.meta.v1 import LabelSelectorArgs, ObjectMetaArgs
@@ -258,11 +258,11 @@ worker = Image(name="locustWorker",
               opts=ResourceOptions(depends_on=[registry_api]))
 
 # Create deployment for the Locust worker.
-deployment = Deployment(
+deployment = StatefulSet(
     "locust-worker",
     spec=DeploymentSpecArgs(selector=LabelSelectorArgs(match_labels={
         "component": "worker", }),
-        replicas=1,
+        replicas=WORKER_REPLICAS,
         template=PodTemplateSpecArgs(metadata=ObjectMetaArgs(labels={
             "app": "locust-worker",
             "component": "worker",
