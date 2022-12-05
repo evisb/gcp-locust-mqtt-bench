@@ -5,6 +5,7 @@ config:
   gcp-locust-mqtt-bench:project_id: locust-cluster-gke-23113f
   gcp-locust-mqtt-bench:project_name: locust-cluster-gke
   gcp-locust-mqtt-bench:billing_account: "01659C-EF5CED-1C5E4B"
+  gcp-locust-mqtt-bench:worker_replicas: "20"
   gcp:project: locust-cluster-gke-23113f
   gcp:region: us-central1
   gcp:zone: us-central1-a

@@ -19,6 +19,7 @@ MACHINE_TYPE = config.get('gke_machine_type')
 BILLING_ACCOUNT = config.get('billing_account')
 PROJECT_NAME = config.get('project_name')
 PROJECT_ID = config.get('project_id')
+WORKER_REPLICAS = config.get_int('worker_replicas')
 
 # Create a project for the Locust cluster
 bench_project = organizations.Project(
@@ -263,11 +264,11 @@ deployment = Deployment(
         "component": "worker", }),
         replicas=1,
         template=PodTemplateSpecArgs(metadata=ObjectMetaArgs(labels={
-            "app": "locust",
+            "app": "locust-worker",
             "component": "worker",
         }),
             spec=PodSpecArgs(containers=[
-                ContainerArgs(name="locust",
+                ContainerArgs(name="locust-worker",
                                 image=worker.image_name,
                                 env=[EnvVarArgs(
                                     name="LOCUST_MODE",
